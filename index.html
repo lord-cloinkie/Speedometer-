@@ -9,6 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <title>Speedo</title>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
 :root{
   color-scheme:dark;
@@ -102,6 +103,22 @@ input,select{-webkit-user-select:text;user-select:text}
 .btns{display:flex;gap:12px;margin-top:16px}
 .btns button{flex:1;font:inherit;font-size:22px;border-radius:12px;padding:11px 0;border:1px solid var(--line);background:none;color:var(--mid)}
 .btns button.main{background:var(--accent);border-color:var(--accent);color:#000}
+.w .gap{margin-left:18px}
+#etaPick{position:fixed;inset:0;z-index:11;display:flex;flex-direction:column;background:#000;padding-top:env(safe-area-inset-top,0px);box-sizing:border-box;touch-action:none}
+#etaPick[hidden]{display:none}
+#etaMap{flex:1;min-height:0;background:#000;font-family:var(--font)}
+#etaPanel{background:var(--sheet);border-top:1px solid var(--line);border-radius:22px 22px 0 0;margin-top:-22px;position:relative;z-index:1000;padding:14px 22px calc(18px + env(safe-area-inset-bottom,0px));box-sizing:border-box;width:100%;max-width:520px;align-self:center}
+.etaHint{font-size:19px;font-weight:500;color:var(--mid);text-align:center;min-height:1.3em;padding:4px 0 2px}
+.etaTools{display:flex;gap:10px;justify-content:center;margin:6px 0 0}
+.etaTools .pill[hidden]{display:none}
+#etaTime{width:150px}
+.pin{width:22px;height:22px;box-sizing:border-box;border-radius:50%;border:3px solid var(--accent);background:rgba(0,0,0,.6);box-shadow:0 0 0 5px rgba(0,0,0,.35)}
+.me{width:14px;height:14px;box-sizing:border-box;border-radius:50%;background:var(--fg);border:3px solid var(--sheet);box-shadow:0 0 0 2px var(--accent2)}
+.leaflet-container{background:#000;font-family:var(--font)}
+.leaflet-bar a,.leaflet-bar a:hover{background:var(--sheet);color:var(--accent);border-color:var(--line)}
+.leaflet-control-attribution{background:rgba(0,0,0,.6)!important;color:var(--dim)!important}
+.leaflet-control-attribution a{color:var(--mid)!important}
+.btns button:disabled{opacity:.3}
 @media (prefers-reduced-motion:reduce){#app{transition:none}}
 </style>
 </head>
@@ -119,6 +136,7 @@ input,select{-webkit-user-select:text;user-select:text}
     <div class="w" id="wAvg" hidden></div>
     <div class="w" id="wCad" hidden></div>
     <div class="w" id="wTime" hidden></div>
+    <div class="w" id="wEta" hidden></div>
     <a class="w" id="wMaps" href="https://www.google.com/maps" target="_blank" rel="noopener" hidden>Maps</a>
   </div>
 </div>
@@ -126,6 +144,22 @@ input,select{-webkit-user-select:text;user-select:text}
 <div id="grid"></div>
 <div id="hold"></div>
 <div id="editBar"><span id="editHint"></span><button id="editSnap"></button><button id="editReset">Reset</button><button class="main" id="editDone">Done</button><input type="range" id="editSize" min="0.3" max="6" step="0.05"></div>
+
+<div id="etaPick" hidden>
+  <div id="etaMap"></div>
+  <div id="etaPanel">
+    <div id="etaS1">
+      <div class="etaHint" id="etaHint">Tap the map to drop a pin</div>
+      <div class="etaTools"><button class="pill" id="etaLoc">My location</button><button class="pill" id="etaClear" hidden>Clear</button></div>
+      <div class="btns"><button id="etaCancel">Cancel</button><button class="main" id="etaNext" disabled>Next</button></div>
+    </div>
+    <div id="etaS2" hidden>
+      <div class="row"><span>Be there by</span><input class="num" type="time" id="etaTime"></div>
+      <div class="etaHint" id="etaSum"></div>
+      <div class="btns"><button id="etaBack">Back</button><button class="main" id="etaSet">Set</button></div>
+    </div>
+  </div>
+</div>
 
 <div id="menu">
   <div id="sheet">
@@ -139,6 +173,7 @@ input,select{-webkit-user-select:text;user-select:text}
     <div class="row"><span>Trip timer<small id="timeNote"></small></span><button class="sw" data-k="time"></button></div>
     <div class="row"><span>Average speed<small id="avgNote"></small></span><button class="sw" data-k="avg"></button></div>
     <div class="row"><span>Google Maps shortcut</span><button class="sw" data-k="maps"></button></div>
+    <div class="row"><span>Arrive-by<small>Tap it to pick a place and a time</small></span><button class="sw" data-k="eta"></button></div>
     <div class="row"><span>Cadence<small id="cadNote"></small></span><button class="sw" data-k="cad"></button></div>
     <details class="dd sub"><summary>Gear ratio</summary>
       <div class="row"><span>Chainring teeth</span><input class="num" type="number" id="ring" min="10" max="80" inputmode="numeric"></div>
@@ -162,10 +197,11 @@ input,select{-webkit-user-select:text;user-select:text}
   </div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 (function(){
   var $=function(s){return document.querySelector(s)};
-  var DEF={unit:'kph',clock:false,top:false,maps:false,h12:false,wake:true,full:true,hue:171,sat:100,lay:{},snap:true,hold:1.5,shift:true,shiftS:60,trip:false,avg:false,cad:false,time:false,tmode:'total',ring:48,cog:16,wheel:2105};
+  var DEF={unit:'kph',clock:false,top:false,maps:false,h12:false,wake:true,full:true,hue:171,sat:100,lay:{},snap:true,hold:1.5,shift:true,shiftS:60,trip:false,avg:false,cad:false,time:false,eta:false,tmode:'total',ring:48,cog:16,wheel:2105};
   var S=Object.assign({},DEF);
   try{Object.assign(S,JSON.parse(localStorage.getItem('speedo')||'{}'))}catch(e){}
   S.avg=false;
@@ -194,6 +230,7 @@ input,select{-webkit-user-select:text;user-select:text}
     setH('#wCad','<small>cad</small>'+(hasFix?Math.round(rpm):'--')+' <small>rpm</small>');
     var mv=S.tmode==='moving';
     setH('#wTime','<small>'+(mv?'moving':'time')+'</small>'+fmt(mv?tripT:tripE));
+    etaRender();
   }
   function clock(){
     var d=new Date(),h=d.getHours(),m=('0'+d.getMinutes()).slice(-2),suf='';
@@ -207,6 +244,7 @@ input,select{-webkit-user-select:text;user-select:text}
     $('#wAvg').hidden=!S.avg;
     $('#wCad').hidden=!S.cad;
     $('#wTime').hidden=!S.time;
+    $('#wEta').hidden=!S.eta;
     var tb=document.querySelector('[data-k="time"]');
     tb.disabled=!(S.trip||S.time);
     $('#timeNote').textContent=(S.trip||S.time)?'':'Needs the trip widget';
@@ -214,7 +252,7 @@ input,select{-webkit-user-select:text;user-select:text}
     ab.disabled=!(canAvg||S.avg);
     $('#avgNote').textContent=(canAvg||S.avg)?'':'Needs a running trip';
     $('#wMaps').hidden=!S.maps;
-    $('#widgets').hidden=!(S.clock||S.top||S.trip||S.avg||S.cad||S.time||S.maps);
+    $('#widgets').hidden=!(S.clock||S.top||S.trip||S.avg||S.cad||S.time||S.maps||S.eta);
     document.querySelectorAll('.sw').forEach(function(b){b.classList.toggle('on',!!S[b.dataset.k])});
     document.querySelectorAll('.seg button').forEach(function(b){b.classList.toggle('on',b.dataset.u===S.unit)});
     $('#hue').value=S.hue;$('#sat').value=S.sat;
@@ -294,6 +332,7 @@ input,select{-webkit-user-select:text;user-select:text}
     if(!started){start();return}
     if(WID.trip.contains(e.target)){pop.hidden?showPop():hidePop();return}
     if(WID.time.contains(e.target)){S.tmode=S.tmode==='moving'?'total':'moving';save();render();return}
+    if(WID.eta.contains(e.target)){openEta();return}
     if(!stage.contains(e.target))return;
     S.unit=S.unit==='kph'?'mph':'kph';save();apply();
   });
@@ -354,6 +393,80 @@ input,select{-webkit-user-select:text;user-select:text}
     if(!pop.hidden&&!e.target.closest('#tripPop')&&!WID.trip.contains(e.target))hidePop();
   });
 
+  /* Arrive-by: pick a place on a map and a time, show time left and distance to go */
+  var dest=null,pend=null,map=null,pin=null,meM=null,pk=$('#etaPick');
+  try{dest=JSON.parse(localStorage.getItem('speedo_eta')||'null')}catch(e){}
+  function saveEta(){try{if(dest)localStorage.setItem('speedo_eta',JSON.stringify(dest));else localStorage.removeItem('speedo_eta')}catch(e){}}
+  function etaRender(){
+    if(!dest){setH('#wEta','Set arrival');return}
+    var left=Math.round((dest.t-Date.now())/1000),
+        d=last?dist(last.la,last.lo,dest.la,dest.lo)/(S.unit==='kph'?1000:1609.344):null;
+    setH('#wEta','<small>left</small>'+(left<0?'-':'')+fmt(Math.abs(left))+
+      '<span class="gap"><small>to go</small>'+(d==null?'--':d.toFixed(d<100?1:0))+' <small>'+(S.unit==='kph'?'km':'mi')+'</small></span>');
+  }
+  setInterval(etaRender,1000);
+  function etaStep(n){$('#etaS1').hidden=n!==1;$('#etaS2').hidden=n!==2}
+  function icon(c,n){return L.divIcon({className:'',html:'<div class="'+c+'"></div>',iconSize:[n,n],iconAnchor:[n/2,n/2]})}
+  function setPin(la,lo){
+    pend={la:la,lo:lo};
+    if(pin)pin.setLatLng([la,lo]);else pin=L.marker([la,lo],{icon:icon('pin',22),interactive:false,keyboard:false}).addTo(map);
+    $('#etaNext').disabled=false;
+    $('#etaHint').textContent='Pin dropped. Tap again to move it.';
+  }
+  function initMap(){
+    map=L.map('etaMap',{worldCopyJump:true}).setView([20,0],2);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{subdomains:'abcd',maxZoom:19,attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
+    map.on('click',function(e){var p=e.latlng.wrap();setPin(p.lat,p.lng)});
+  }
+  function openEta(){
+    pend=dest?{la:dest.la,lo:dest.lo}:null;
+    pk.hidden=false;etaStep(1);
+    $('#etaClear').hidden=!dest;
+    $('#etaNext').disabled=!pend;
+    $('#etaHint').textContent='Tap the map to drop a pin';
+    if(typeof L==='undefined'){$('#etaHint').textContent='The map could not load. Check your connection.';return}
+    if(!map)initMap();
+    map.invalidateSize();
+    if(meM){map.removeLayer(meM);meM=null}
+    if(last)meM=L.marker([last.la,last.lo],{icon:icon('me',14),interactive:false,keyboard:false}).addTo(map);
+    if(pin){map.removeLayer(pin);pin=null}
+    if(pend){setPin(pend.la,pend.lo);$('#etaHint').textContent='Tap the map to move the pin';map.setView([pend.la,pend.lo],14)}
+    else if(last)map.setView([last.la,last.lo],14);
+  }
+  function closeEta(){pk.hidden=true}
+  function tParse(v){
+    var p=(v||'').split(':'),d=new Date();
+    d.setHours(+p[0]||0,+p[1]||0,0,0);
+    if(d.getTime()<=Date.now())d.setDate(d.getDate()+1);
+    return d;
+  }
+  function two(n){return ('0'+n).slice(-2)}
+  function sumUpdate(){
+    var d=tParse($('#etaTime').value),tom=d.getDate()!==new Date().getDate(),
+        km=last&&pend?dist(last.la,last.lo,pend.la,pend.lo)/(S.unit==='kph'?1000:1609.344):null;
+    $('#etaSum').textContent=(tom?'Tomorrow':'Today')+(km==null?'':' · '+km.toFixed(km<100?1:0)+' '+(S.unit==='kph'?'km':'mi')+' away');
+  }
+  $('#etaLoc').addEventListener('click',function(){
+    if(!map)return;
+    if(last)map.setView([last.la,last.lo],15);else $('#etaHint').textContent='Waiting for a GPS fix…';
+  });
+  $('#etaCancel').addEventListener('click',closeEta);
+  $('#etaClear').addEventListener('click',function(){dest=null;saveEta();closeEta();etaRender()});
+  $('#etaNext').addEventListener('click',function(){
+    if(!pend)return;
+    var d=dest?new Date(dest.t):new Date(Date.now()+30*60000);
+    if(!dest)d.setMinutes(Math.ceil(d.getMinutes()/5)*5,0,0);
+    $('#etaTime').value=two(d.getHours())+':'+two(d.getMinutes());
+    sumUpdate();etaStep(2);
+  });
+  $('#etaTime').addEventListener('input',sumUpdate);
+  $('#etaBack').addEventListener('click',function(){etaStep(1)});
+  $('#etaSet').addEventListener('click',function(){
+    if(!pend||!$('#etaTime').value)return;
+    dest={la:pend.la,lo:pend.lo,t:tParse($('#etaTime').value).getTime()};
+    saveEta();closeEta();etaRender();
+  });
+
   /* Cadence from gearing */
   function note(){$('#cadNote').textContent='Ratio '+(S.ring/S.cog).toFixed(2)+' ('+S.ring+'/'+S.cog+')'}
   function readGear(){
@@ -387,10 +500,10 @@ input,select{-webkit-user-select:text;user-select:text}
 
   /* Widget layout: drag to move, pinch or slide to resize */
   var editing=false,sel='speed';
-  var DL={p:{speed:{x:.5,y:.42,s:1},clock:{x:.2,y:.9,s:1},top:{x:.8,y:.9,s:1},maps:{x:.5,y:.8,s:1},trip:{x:.5,y:.9,s:1},avg:{x:.75,y:.72,s:1},cad:{x:.25,y:.72,s:1},time:{x:.2,y:.8,s:1}},
-          l:{speed:{x:.5,y:.46,s:1},clock:{x:.1,y:.88,s:1},trip:{x:.27,y:.88,s:1},avg:{x:.5,y:.88,s:1},maps:{x:.7,y:.88,s:1},top:{x:.88,y:.88,s:1},cad:{x:.12,y:.7,s:1},time:{x:.88,y:.7,s:1}}};
-  var WID={speed:stage,clock:$('#wClock'),top:$('#wTop'),trip:$('#wTrip'),avg:$('#wAvg'),cad:$('#wCad'),time:$('#wTime'),maps:$('#wMaps')};
-  var NAMES={speed:'Speed',clock:'Clock',top:'Top speed',trip:'Trip',avg:'Average speed',cad:'Cadence',time:'Trip timer',maps:'Maps'};
+  var DL={p:{speed:{x:.5,y:.42,s:1},clock:{x:.2,y:.9,s:1},top:{x:.8,y:.9,s:1},maps:{x:.5,y:.8,s:1},trip:{x:.5,y:.9,s:1},avg:{x:.75,y:.72,s:1},cad:{x:.25,y:.72,s:1},time:{x:.2,y:.8,s:1},eta:{x:.5,y:.66,s:1}},
+          l:{speed:{x:.5,y:.46,s:1},clock:{x:.1,y:.88,s:1},trip:{x:.27,y:.88,s:1},avg:{x:.5,y:.88,s:1},maps:{x:.7,y:.88,s:1},top:{x:.88,y:.88,s:1},cad:{x:.12,y:.7,s:1},time:{x:.88,y:.7,s:1},eta:{x:.5,y:.96,s:1}}};
+  var WID={speed:stage,clock:$('#wClock'),top:$('#wTop'),trip:$('#wTrip'),avg:$('#wAvg'),cad:$('#wCad'),time:$('#wTime'),eta:$('#wEta'),maps:$('#wMaps')};
+  var NAMES={speed:'Speed',clock:'Clock',top:'Top speed',trip:'Trip',avg:'Average speed',cad:'Cadence',time:'Trip timer',eta:'Arrive-by',maps:'Maps'};
   function ori(){return window.innerWidth>window.innerHeight?'l':'p'}
   function getL(k){var o=ori(),v=(S.lay[o]&&S.lay[o][k])||DL[o][k];return {x:v.x,y:v.y,s:v.s}}
   function setL(k,v){var o=ori();S.lay[o]=S.lay[o]||{};S.lay[o][k]=v}
